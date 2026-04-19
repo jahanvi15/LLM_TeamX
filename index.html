@@ -1061,82 +1061,24 @@ function drawChart(labels, values, sentiment){
   });
 }
 
-/* ── demo data ── */
-const DEMO_DATA = {
-  renewable: {
-    labels:['Oct','Nov','Dec','Jan','Feb','Mar'],
-    values:[240,310,280,420,390,510],
-    sentiment:[3.2,3.5,3.3,4.1,3.9,4.4],
-    summary:`Solar and offshore wind investments surged in the past 30 days, driven by new national energy targets following COP30 commitments. Southeast Asia and Northern Europe lead in capacity additions, with Japan and Germany announcing record subsidy packages.`,
-    articles:[
-      {title:'EU solar capacity hits record 300 GW milestone',theme:'Renewable Energy',region:'Europe',sentiment:'Positive',source:'Reuters',conf:91},
-      {title:'India announces $60B offshore wind investment package',theme:'Renewable Energy',region:'Asia-Pacific',sentiment:'Positive',source:'BBC',conf:88},
-      {title:'US Inflation Reduction Act boosts solar manufacturing',theme:'Renewable Energy',region:'Americas',sentiment:'Positive',source:'Guardian',conf:85},
-      {title:'Grid-scale battery storage costs fall 40% year-on-year',theme:'Renewable Energy',region:'Global',sentiment:'Positive',source:'GDELT',conf:79},
-    ]
-  },
-  emissions:{
-    labels:['Oct','Nov','Dec','Jan','Feb','Mar'],
-    values:[180,200,320,270,240,290],
-    sentiment:[2.1,2.4,1.9,2.8,2.6,3.0],
-    summary:`Global CO₂ emissions discourse intensified after Q4 reporting season revealed several major economies missed interim Paris targets. Carbon market volatility and new national pledges dominated coverage, with mixed sentiment reflecting both concern and cautious optimism.`,
-    articles:[
-      {title:'China carbon market trading volumes double in 2025',theme:'Emissions & Carbon',region:'Asia-Pacific',sentiment:'Mixed',source:'Reuters',conf:87},
-      {title:'EU ETS price hits €110 per tonne amid supply reforms',theme:'Emissions & Carbon',region:'Europe',sentiment:'Neutral',source:'Guardian',conf:83},
-      {title:'Methane pledge compliance audits show 60% shortfall',theme:'Emissions & Carbon',region:'Global',sentiment:'Negative',source:'IPCC',conf:90},
-    ]
-  },
-  biodiversity:{
-    labels:['Oct','Nov','Dec','Jan','Feb','Mar'],
-    values:[90,110,130,100,140,160],
-    sentiment:[2.8,3.0,3.1,2.7,3.3,3.5],
-    summary:`Biodiversity coverage spiked around COP16 outcomes and the new global nature framework implementation reviews. Amazon deforestation rates show marginal decline while coral bleaching events in the Pacific drew significant media attention.`,
-    articles:[
-      {title:'Amazon deforestation down 12% but still above 2019 levels',theme:'Biodiversity',region:'Americas',sentiment:'Mixed',source:'Guardian',conf:86},
-      {title:'COP16 Kunming-Montreal framework: first annual review',theme:'Biodiversity',region:'Global',sentiment:'Mixed',source:'BBC',conf:88},
-      {title:'Great Barrier Reef records fourth mass bleaching event',theme:'Biodiversity',region:'Asia-Pacific',sentiment:'Negative',source:'Reuters',conf:92},
-    ]
-  },
-  water:{
-    labels:['Oct','Nov','Dec','Jan','Feb','Mar'],
-    values:[70,95,85,120,105,130],
-    sentiment:[2.5,2.6,2.4,2.9,2.7,3.1],
-    summary:`Water scarcity narratives dominated coverage in Sub-Saharan Africa and South Asia. New desalination technologies and transboundary water agreements provided positive signals, while flash flooding events in Europe kept the issue prominent.`,
-    articles:[
-      {title:'Cape Town water recycling project declared a global model',theme:'Water & Oceans',region:'Africa',sentiment:'Positive',source:'BBC',conf:82},
-      {title:'Himalayan glacial retreat threatens 200M downstream users',theme:'Water & Oceans',region:'Asia-Pacific',sentiment:'Negative',source:'IPCC',conf:94},
-      {title:'Mediterranean marine heatwave sets new temperature record',theme:'Water & Oceans',region:'Europe',sentiment:'Negative',source:'Reuters',conf:89},
-    ]
-  },
-  policy:{
-    labels:['Oct','Nov','Dec','Jan','Feb','Mar'],
-    values:[300,340,410,380,430,500],
-    sentiment:[3.0,3.2,3.4,3.1,3.6,3.8],
-    summary:`Climate policy coverage reached a two-year high as COP30 follow-up legislation moved through multiple national parliaments. Carbon border adjustment mechanisms and green industrial policy dominated discourse, with EU and US leading regulatory developments.`,
-    articles:[
-      {title:'EU Carbon Border Adjustment Mechanism enters full operation',theme:'Climate Policy',region:'Europe',sentiment:'Positive',source:'Reuters',conf:90},
-      {title:'G20 fossil fuel subsidy phase-out agreement faces delays',theme:'Climate Policy',region:'Global',sentiment:'Negative',source:'Guardian',conf:85},
-      {title:'US Clean Energy Standard passes Senate in landmark vote',theme:'Climate Policy',region:'Americas',sentiment:'Positive',source:'BBC',conf:88},
-      {title:'ASEAN green taxonomy framework adopted by 8 nations',theme:'Climate Policy',region:'Asia-Pacific',sentiment:'Positive',source:'GDELT',conf:80},
-    ]
-  }
-};
-
 const sentimentColor = s => s==='Positive'?'green':s==='Negative'?'blue':'amber';
 const themeLabels = {renewable:'Renewable Energy',emissions:'Emissions & Carbon',biodiversity:'Biodiversity',water:'Water & Oceans',policy:'Climate Policy'};
 
-function runAnalysis(){
-  const btn = document.getElementById('runBtn');
-  const panel = document.getElementById('resultsPanel');
-  const theme = document.getElementById('themeSelect').value;
+function escapeHtml(str){
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function runAnalysis(){
+  const btn    = document.getElementById('runBtn');
+  const panel  = document.getElementById('resultsPanel');
+  const theme  = document.getElementById('themeSelect').value;
   const region = document.getElementById('regionSelect').value;
-  const time = document.getElementById('timeSelect').value;
-  const nlq = document.getElementById('nlQuery').value;
+  const timeWindow = document.getElementById('timeSelect').value;
+  const nlq    = document.getElementById('nlQuery').value;
 
   btn.disabled = true;
   btn.innerHTML = '<span style="display:inline-block;animation:spin .8s linear infinite">⟳</span> Analyzing...';
 
-  // show skeletons
   panel.innerHTML = `
     <div class="result-card" style="opacity:1;transform:none">
       <div class="skeleton" style="width:60%;height:16px"></div>
@@ -1149,62 +1091,85 @@ function runAnalysis(){
       <div class="skeleton" style="width:75%"></div>
     </div>`;
 
-  const data = DEMO_DATA[theme];
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme, region, timeWindow, nlQuery: nlq })
+    });
+    if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+    const data = await response.json();
 
-  setTimeout(()=>{
-    // draw chart
+    // draw real chart
     document.getElementById('chartTitle').textContent = `${themeLabels[theme]} — Article Volume`;
-    drawChart(data.labels, data.values, data.sentiment);
+    drawChart(data.chartData.labels, data.chartData.values, data.chartData.sentiment);
 
-    // build results
     let html = '';
 
-    // summary card
-    html += `<div class="result-card" style="animation-delay:0s;border-left:4px solid var(--sage)">
-      <div class="result-meta">
-        <span class="meta-chip green">RAG Summary</span>
-        <span class="meta-chip">${themeLabels[theme]}</span>
-        <span class="meta-chip blue">G-Eval: 4.5/5</span>
-      </div>
-      <div class="result-title" id="summaryTitle">AI-Generated Trend Summary</div>
-      <div class="result-summary" id="summaryText" style="color:var(--ink)"></div>
-    </div>`;
-
-    // article cards
-    data.articles.forEach((a,i)=>{
-      html += `<div class="result-card" style="animation-delay:${(i+1)*.1}s">
+    // summary card (only if GPT returned one)
+    if (data.summary) {
+      html += `<div class="result-card" style="animation-delay:0s;border-left:4px solid var(--sage)">
         <div class="result-meta">
-          <span class="meta-chip ${sentimentColor(a.sentiment)}">${a.sentiment}</span>
-          <span class="meta-chip">${a.theme}</span>
-          <span class="meta-chip">${a.region}</span>
+          <span class="meta-chip green">RAG Summary</span>
+          <span class="meta-chip">${themeLabels[theme]}</span>
+          <span class="meta-chip blue">GPT-4o-mini</span>
         </div>
-        <div class="result-title">${a.title}</div>
-        <div class="result-footer">
-          <a class="source-link" href="#">📰 ${a.source}</a>
-          <div class="confidence">
-            <span>Confidence</span>
-            <div class="conf-bar"><div class="conf-fill" style="width:${a.conf}%"></div></div>
-            <span>${a.conf}%</span>
-          </div>
-        </div>
+        <div class="result-title">AI-Generated Trend Summary</div>
+        <div class="result-summary" id="summaryText" style="color:var(--ink)"></div>
       </div>`;
-    });
+    }
+
+    const articles = data.articles || [];
+    if (articles.length === 0) {
+      html += `<div class="empty-state"><div class="empty-icon">📭</div>
+        <p>No articles found for this query. Try a different theme or broaden the time window.</p></div>`;
+    } else {
+      articles.slice(0, 15).forEach((a, i) => {
+        const snip = a.snippet
+          ? `<div class="result-summary">${escapeHtml(a.snippet.substring(0,160))}…</div>` : '';
+        const badge = a.from === 'newsapi' ? 'NewsAPI' : 'GDELT';
+        html += `<div class="result-card" style="animation-delay:${(i+1)*.08}s">
+          <div class="result-meta">
+            <span class="meta-chip ${sentimentColor(a.sentiment)}">${escapeHtml(a.sentiment||'Neutral')}</span>
+            <span class="meta-chip">${themeLabels[theme]}</span>
+            <span class="meta-chip">${badge}</span>
+          </div>
+          <div class="result-title">${escapeHtml(a.title)}</div>
+          ${snip}
+          <div class="result-footer">
+            <a class="source-link" href="${escapeHtml(a.url||'#')}" target="_blank" rel="noopener">
+              📰 ${escapeHtml(a.source||'Unknown')}
+            </a>
+          </div>
+        </div>`;
+      });
+    }
 
     panel.innerHTML = html;
 
-    // typewriter for summary
-    const summaryEl = document.getElementById('summaryText');
-    const text = data.summary;
-    let i = 0;
-    summaryEl.classList.add('typing-cursor');
-    const iv = setInterval(()=>{
-      summaryEl.textContent += text[i++];
-      if(i>=text.length){ clearInterval(iv); summaryEl.classList.remove('typing-cursor'); }
-    }, 18);
+    // typewriter for GPT summary
+    if (data.summary) {
+      const summaryEl = document.getElementById('summaryText');
+      const text = data.summary;
+      let i = 0;
+      summaryEl.classList.add('typing-cursor');
+      const iv = setInterval(()=>{
+        summaryEl.textContent += text[i++];
+        if(i>=text.length){ clearInterval(iv); summaryEl.classList.remove('typing-cursor'); }
+      }, 18);
+    }
 
-    btn.disabled = false;
-    btn.innerHTML = '<span>▶</span> Run Analysis';
-  }, 1400);
+  } catch(err) {
+    panel.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">⚠️</div>
+      <p><strong>Could not reach the analysis server.</strong><br/>
+      Start it with: <code style="background:var(--sand);padding:.1rem .4rem;border-radius:4px">node server.js</code><br/>
+      <small style="color:var(--muted)">${escapeHtml(err.message)}</small></p>
+    </div>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<span>▶</span> Run Analysis';
 }
 
 // spin animation
@@ -1212,18 +1177,19 @@ const style = document.createElement('style');
 style.textContent = '@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}';
 document.head.appendChild(style);
 
-// initial chart render
+// initial placeholder chart
+const PLACEHOLDER_CHART = {
+  labels:    ['Oct','Nov','Dec','Jan','Feb','Mar'],
+  values:    [240,310,280,420,390,510],
+  sentiment: [3.2,3.5,3.3,4.1,3.9,4.4]
+};
 window.addEventListener('load', ()=>{
   setTimeout(()=>drawChart(
-    ['Oct','Nov','Dec','Jan','Feb','Mar'],
-    [240,310,280,420,390,510],
-    [3.2,3.5,3.3,4.1,3.9,4.4]
-  ),300);
+    PLACEHOLDER_CHART.labels, PLACEHOLDER_CHART.values, PLACEHOLDER_CHART.sentiment
+  ), 300);
 });
 window.addEventListener('resize', ()=>{
-  const theme = document.getElementById('themeSelect').value;
-  const data = DEMO_DATA[theme];
-  drawChart(data.labels, data.values, data.sentiment);
+  drawChart(PLACEHOLDER_CHART.labels, PLACEHOLDER_CHART.values, PLACEHOLDER_CHART.sentiment);
 });
 </script>
 </body>

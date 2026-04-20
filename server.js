@@ -373,11 +373,48 @@ app.post('/api/evaluate', async (req, res) => {
     if (start + BATCH < total) await sleep(1000);
   }
 
-  console.log('[EVAL] Computing metrics...');
+  console.log('[EVAL] Computing classification metrics...');
   const gptMetrics     = computeMetrics(goldLabels, gptPreds);
   const keywordMetrics = computeMetrics(goldLabels, keywordPreds);
 
-  // Round all floats to 2 dp for readability
+  // ── G-Eval: score RAG summary quality on a 5-article sample ─────────
+  let geval = null;
+  try {
+    const sample     = labeled.slice(0, 5);
+    const sampleText = sample.map((a, i) =>
+      `${i + 1}. "${a.title}" — ${(a.snippet || '').substring(0, 120)}`
+    ).join('\n');
+
+    console.log('[EVAL] Running G-Eval summary scoring...');
+    const summaryRes = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content:
+        `Summarize these sustainability news articles in 3-4 sentences:\n${sampleText}`
+      }],
+      max_tokens: 200,
+      temperature: 0.3,
+    });
+    const generatedSummary = summaryRes.choices[0].message.content.trim();
+
+    const scoreRes = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content:
+        `You are an evaluation judge. Score the following summary against the source articles.\n\n` +
+        `Source articles:\n${sampleText}\n\n` +
+        `Summary:\n${generatedSummary}\n\n` +
+        `Rate each dimension 1.0–5.0. Return ONLY valid JSON (no markdown):\n` +
+        `{"relevance":X,"coherence":X,"grounding":X}`
+      }],
+      max_tokens: 40,
+      temperature: 0,
+    });
+    geval = JSON.parse(scoreRes.choices[0].message.content.trim());
+    console.log('[EVAL] G-Eval scores:', geval);
+  } catch (e) {
+    console.warn('[EVAL] G-Eval scoring failed:', e.message);
+  }
+
+  // Round all floats to 3 dp for readability
   const fmt = obj => {
     const out = {};
     for (const [k, v] of Object.entries(obj)) {
@@ -393,11 +430,35 @@ app.post('/api/evaluate', async (req, res) => {
     ),
   });
 
-  res.json({
+  const result = {
     total,
     gpt:     fmtMetrics(gptMetrics),
     keyword: fmtMetrics(keywordMetrics),
-  });
+    geval,
+  };
+
+  // Cache to disk so GET /api/eval-results can serve it instantly
+  try {
+    require('fs').writeFileSync(
+      path.join(__dirname, 'eval_results.json'),
+      JSON.stringify(result, null, 2)
+    );
+    console.log('[EVAL] Results saved to eval_results.json');
+  } catch (e) {
+    console.warn('[EVAL] Could not save eval_results.json:', e.message);
+  }
+
+  res.json(result);
+});
+
+// GET /api/eval-results — serves cached eval_results.json (written by POST /api/evaluate)
+app.get('/api/eval-results', (req, res) => {
+  try {
+    const raw = require('fs').readFileSync(path.join(__dirname, 'eval_results.json'), 'utf8');
+    res.json(JSON.parse(raw));
+  } catch (e) {
+    res.status(404).json({ error: 'No cached results yet — run POST /api/evaluate first.' });
+  }
 });
 
 // GET /api/evaluate — HTML shell that triggers the POST and renders results

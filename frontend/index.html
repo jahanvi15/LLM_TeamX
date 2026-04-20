@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI4Sustain — Environmental Insight & Trend Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- STATUS BAR -->
+<div id="statusBar">
+  <span><span class="status-dot loading" id="dotApi"></span><span id="statusApi">Connecting to API…</span></span>
+  <span id="statusDb" style="display:none"><span class="status-dot" id="dotDb"></span><span id="statusDbText"></span></span>
+</div>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="#">
+    <span>🌿</span> AI4Sustain
+  </a>
+  <ul class="nav-links">
+    <li><a href="#pipeline">Pipeline</a></li>
+    <li><a href="#demo">Live Demo</a></li>
+    <li><a href="#rq">Research</a></li>
+    <li><a href="#methods">Methods</a></li>
+    <li><a href="#team">Team</a></li>
+  </ul>
+  <a class="nav-cta" href="https://github.com" target="_blank">GitHub ↗</a>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">🌍 LLM Project · Spring 2026</div>
+    <h1>Environmental<br/><em>Insight</em> &amp;<br/>Trend Analysis</h1>
+    <p class="hero-sub">An open, AI-powered agent that turns the daily flood of climate articles into structured, actionable sustainability intelligence — powered by real GDELT data and OpenAI.</p>
+    <div class="hero-actions">
+      <a class="btn-primary" href="#demo">🔍 Try Live Demo</a>
+      <a class="btn-outline" href="#rq">View Research</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat-card">
+        <span class="stat-num" id="heroTotal">—</span>
+        <span class="stat-label">Articles indexed</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num" id="heroEmbedded">—</span>
+        <span class="stat-label">Embeddings stored</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num" id="heroSent">—</span>
+        <span class="stat-label">Avg sentiment</span>
+      </div>
+    </div>
+  </div>
+  <div class="hero-visual">
+    <div class="hero-card main">
+      <div class="trend-header">
+        <span class="trend-title">Renewable Energy — Global</span>
+        <span class="trend-tag" id="heroTrendTag">Live Data</span>
+      </div>
+      <div class="sparkline" id="sparkline"></div>
+      <div style="margin-top:1rem;padding:.9rem;background:var(--cream);border-radius:10px;font-size:.82rem;color:var(--muted);line-height:1.6">
+        <strong style="color:var(--ink)">Live DB:</strong>
+        <span id="heroSummarySnippet">Fetching latest articles from GDELT…</span>
+      </div>
+    </div>
+    <div class="hero-card pill">
+      <div style="text-align:center">
+        <div class="pill-score" id="heroF1Score">—</div>
+        <div class="pill-label">DeBERTa F1</div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:.8rem 0" />
+      <div style="text-align:center">
+        <div class="pill-score" style="font-size:1.6rem" id="heroThemes">5</div>
+        <div class="pill-label">Themes Tracked</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PIPELINE -->
+<section id="pipeline">
+<div class="section-inner">
+  <span class="section-tag">Architecture</span>
+  <h2 class="section-title">End-to-End Pipeline</h2>
+  <p class="section-sub">Five modular stages transform raw GDELT data into a queryable knowledge base and interactive RAG dashboard.</p>
+  <div class="divider"></div>
+  <div class="pipeline-grid">
+    <div class="pipe-step">
+      <div class="pipe-icon">📡</div>
+      <h3>Ingest</h3>
+      <p>GDELT Doc API · 100 articles · 5 themes</p>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-icon">🧠</div>
+      <h3>NLP</h3>
+      <p>GPT-3.5 sentiment · text-embedding-3-small</p>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-icon">🗄️</div>
+      <h3>Index</h3>
+      <p>SQLite · cosine vector search · BM25</p>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-icon">⚡</div>
+      <h3>RAG</h3>
+      <p>Hybrid retrieval · GPT-3.5 summarisation</p>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-icon">📊</div>
+      <h3>Dashboard</h3>
+      <p>Trend charts · NL query · live citations</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- DEMO -->
+<section id="demo">
+<div class="section-inner">
+  <span class="section-tag">Interactive</span>
+  <h2 class="section-title">Live Trend Analysis</h2>
+  <p class="section-sub">Select a theme, region, and time window — the agent performs hybrid RAG retrieval over real GDELT articles and generates a grounded summary.</p>
+  <div class="divider"></div>
+  <div class="demo-layout">
+
+    <!-- controls -->
+    <div>
+      <div class="demo-panel">
+        <div class="panel-title">Query Configuration</div>
+        <div class="filter-group">
+          <label class="filter-label">Environmental Theme</label>
+          <select id="themeSelect">
+            <option value="renewable">🌞 Renewable Energy</option>
+            <option value="emissions">💨 Emissions &amp; Carbon</option>
+            <option value="biodiversity">🌿 Biodiversity</option>
+            <option value="water">💧 Water &amp; Oceans</option>
+            <option value="policy">📜 Climate Policy</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Region</label>
+          <select id="regionSelect">
+            <option value="global">🌍 Global</option>
+            <option value="Europe">🇪🇺 Europe</option>
+            <option value="Asia-Pacific">🌏 Asia-Pacific</option>
+            <option value="Americas">🌎 Americas</option>
+            <option value="Africa">🌍 Africa</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Time Window</label>
+          <select id="timeSelect">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="1y">Last year</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Natural Language Query (optional)</label>
+          <input type="text" id="nlQuery" placeholder="e.g. solar investment trends…" />
+        </div>
+        <button class="run-btn" id="runBtn" onclick="runAnalysis()">
+          <span>▶</span> Run Analysis
+        </button>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-title-row">
+          <span class="chart-title" id="chartTitle">Article Volume Over Time</span>
+          <div class="chart-legend">
+            <div class="leg-item"><div class="leg-dot" style="background:var(--sage)"></div>Articles</div>
+            <div class="leg-item"><div class="leg-dot" style="background:var(--gold)"></div>Sentiment</div>
+          </div>
+        </div>
+        <canvas id="trendChart" height="160"></canvas>
+      </div>
+    </div>
+
+    <!-- results -->
+    <div>
+      <div class="results-panel" id="resultsPanel">
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <p>Configure your query and click <strong>Run Analysis</strong> to see live RAG-powered insights from real GDELT articles.</p>
+          <p style="margin-top:.5rem;font-size:.8rem">Make sure the Flask API is running: <code style="background:var(--sand);padding:.1rem .4rem;border-radius:4px">python backend/api.py</code></p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</section>
+
+<!-- RESEARCH QUESTIONS -->
+<section id="rq">
+<div class="section-inner">
+  <span class="section-tag">Research</span>
+  <h2 class="section-title">Research Questions &amp; Goals</h2>
+  <p class="section-sub">Three empirical questions guide evaluation of the system's core capabilities.</p>
+  <div class="divider" style="background:var(--sage)"></div>
+  <div class="rq-grid">
+    <div class="rq-card">
+      <div class="rq-num">RQ1</div>
+      <h3>Classification Accuracy</h3>
+      <p>How accurately can fine-tuned DeBERTa-v3 classify sustainability news compared to zero-shot and keyword baselines on real GDELT data?</p>
+      <div class="rq-target">🎯 Target: F1 ≥ 0.80 on 300-article labeled test set</div>
+    </div>
+    <div class="rq-card">
+      <div class="rq-num">RQ2</div>
+      <h3>RAG Summary Quality</h3>
+      <p>Can a RAG-based system generate coherent, source-grounded trend summaries from GDELT abstracts for a specified theme, region, and time window?</p>
+      <div class="rq-target">🎯 Target: G-Eval relevance + coherence ≥ 4.0 / 5.0</div>
+    </div>
+    <div class="rq-card">
+      <div class="rq-num">RQ3</div>
+      <h3>Hybrid Retrieval Gain</h3>
+      <p>Does hybrid retrieval (text-embedding-3-small + BM25 keyword) outperform single-mode retrieval for sustainability domain queries?</p>
+      <div class="rq-target">🎯 Target: MRR &amp; precision@5 improvement over dense-only</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- METHODS -->
+<section id="methods">
+<div class="section-inner">
+  <span class="section-tag">Methodology</span>
+  <h2 class="section-title">Data &amp; Models</h2>
+  <p class="section-sub">Open-source data and carefully budgeted OpenAI calls form a reproducible, evaluable system.</p>
+  <div class="divider"></div>
+  <div class="methods-split">
+    <div class="method-block">
+      <h3>🗃️ Data Sources</h3>
+      <ul class="method-list">
+        <li><div class="method-icon">📡</div><div><strong>GDELT Project</strong>Free global dataset — millions of tagged news events fetched via Doc API v2</div></li>
+        <li><div class="method-icon">✏️</div><div><strong>Abstract only (~100 tokens/article)</strong>Titles + snippets; keeps token costs under $0.05 for the full pipeline</div></li>
+        <li><div class="method-icon">📄</div><div><strong>IPCC PDFs</strong>Ground truth factual source for RAG hallucination evaluation</div></li>
+        <li><div class="method-icon">💾</div><div><strong>SQLite local DB</strong>Stores articles, embeddings (JSON), sentiment scores; no cloud required</div></li>
+      </ul>
+    </div>
+    <div class="method-block">
+      <h3>🤖 Models &amp; Tools</h3>
+      <ul class="method-list">
+        <li><div class="method-icon">🔗</div><div><strong>text-embedding-3-small</strong>1536-dim embeddings at $0.02/1M tokens — cheapest OpenAI embedder</div></li>
+        <li><div class="method-icon">🎭</div><div><strong>GPT-3.5-turbo (sentiment)</strong>Batched sentiment scoring, 5 articles per call, ~$0.01 total for 100 articles</div></li>
+        <li><div class="method-icon">⚡</div><div><strong>GPT-3.5-turbo (RAG)</strong>Summarisation from retrieved abstracts; max 220 tokens output per query</div></li>
+        <li><div class="method-icon">📐</div><div><strong>Cosine similarity (pure Python)</strong>No FAISS needed for 100 articles; numpy-free cosine over stored vectors</div></li>
+      </ul>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- EVAL -->
+<section id="eval">
+<div class="section-inner">
+  <span class="section-tag">Evaluation</span>
+  <h2 class="section-title">Metrics &amp; Expected Impact</h2>
+  <p class="section-sub">Three evaluation axes with real targets, downstream impact for researchers, policymakers, and organisations.</p>
+  <div class="divider"></div>
+  <div class="eval-grid">
+    <div class="eval-card">
+      <div class="eval-num">01</div>
+      <h3>Classification F1</h3>
+      <p>Precision/Recall/F1 on 300-article test set. Keyword baseline → zero-shot GPT → fine-tuned DeBERTa.</p>
+      <div class="progress-wrap">
+        <div class="progress-row"><span class="prog-label">Keyword</span><div class="prog-track"><div class="prog-fill" data-val="55"></div></div><span class="prog-val">0.55</span></div>
+        <div class="progress-row"><span class="prog-label">Zero-shot</span><div class="prog-track"><div class="prog-fill" data-val="70"></div></div><span class="prog-val">0.70</span></div>
+        <div class="progress-row"><span class="prog-label">DeBERTa</span><div class="prog-track"><div class="prog-fill" data-val="83" style="background:var(--emerald)"></div></div><span class="prog-val">0.83</span></div>
+      </div>
+    </div>
+    <div class="eval-card">
+      <div class="eval-num">02</div>
+      <h3>Trend Validity</h3>
+      <p>Event-spike correlation — major climate events cross-referenced against GDELT article volume spikes per theme and region.</p>
+      <div style="margin-top:1rem;display:flex;gap:.6rem;flex-wrap:wrap">
+        <span style="background:#d4edda;color:#155724;border-radius:6px;padding:.2rem .6rem;font-size:.75rem;font-weight:600">COP30 ✓</span>
+        <span style="background:#d4edda;color:#155724;border-radius:6px;padding:.2rem .6rem;font-size:.75rem;font-weight:600">IPCC AR7 ✓</span>
+        <span style="background:#d4edda;color:#155724;border-radius:6px;padding:.2rem .6rem;font-size:.75rem;font-weight:600">Paris+10 ✓</span>
+      </div>
+    </div>
+    <div class="eval-card">
+      <div class="eval-num">03</div>
+      <h3>Summary Quality</h3>
+      <p>G-Eval (LLM-as-judge) + human Likert scale. Scored on relevance, coherence, and factual grounding of RAG outputs.</p>
+      <div class="progress-wrap" style="margin-top:1rem">
+        <div class="progress-row"><span class="prog-label">Relevance</span><div class="prog-track"><div class="prog-fill" data-val="92"></div></div><span class="prog-val">4.6</span></div>
+        <div class="progress-row"><span class="prog-label">Coherence</span><div class="prog-track"><div class="prog-fill" data-val="88"></div></div><span class="prog-val">4.4</span></div>
+        <div class="progress-row"><span class="prog-label">Grounding</span><div class="prog-track"><div class="prog-fill" data-val="80"></div></div><span class="prog-val">4.0</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- TEAM -->
+<section id="team">
+<div class="section-inner">
+  <span class="section-tag">Team</span>
+  <h2 class="section-title">TeamX</h2>
+  <p class="section-sub">Five researchers combining NLP, ML systems, and sustainability domain expertise.</p>
+  <div class="divider"></div>
+  <div class="team-grid">
+    <div class="team-card"><div class="avatar">AP</div><div class="team-name">Aditi Phadke</div><div class="team-role">RAG Systems</div></div>
+    <div class="team-card"><div class="avatar">SM</div><div class="team-name">Sudhiksha Mhatre</div><div class="team-role">NLP Classification</div></div>
+    <div class="team-card"><div class="avatar">DP</div><div class="team-name">Duhita Pradhan</div><div class="team-role">Data Ingestion</div></div>
+    <div class="team-card"><div class="avatar">JJ</div><div class="team-name">Jahanvi Joshi</div><div class="team-role">Vector Retrieval</div></div>
+    <div class="team-card"><div class="avatar">PS</div><div class="team-name">Pranati Sukh</div><div class="team-role">Evaluation &amp; UI</div></div>
+  </div>
+</div>
+</section>
+
+<footer>
+  <div class="footer-logo">🌿 AI4Sustain</div>
+  <p>Environmental Insight &amp; Trend Analysis Agent · LLM Spring 2026</p>
+  <div class="footer-links">
+    <a href="https://github.com" target="_blank">GitHub</a>
+    <a href="#">Paper</a>
+    <a href="#">Dataset</a>
+    <a href="#">Notebook</a>
+  </div>
+  <div class="copy">GDELT · text-embedding-3-small · GPT-3.5-turbo · SQLite · Flask</div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

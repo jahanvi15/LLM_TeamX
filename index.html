@@ -858,6 +858,10 @@
   <h2 class="section-title">Metrics &amp; Expected Impact</h2>
   <p class="section-sub">Three evaluation axes measure classification, trend validity, and summary quality — with downstream impact for researchers, policymakers, and organizations.</p>
   <div class="divider"></div>
+  <div id="evalStatus" style="display:none;margin-bottom:1rem;font-size:.82rem;color:var(--muted);align-items:center;gap:.5rem">
+    <span style="display:inline-block;animation:spin .8s linear infinite;font-size:1rem">⟳</span>
+    <span id="evalStatusText">Computing metrics… scores will appear automatically</span>
+  </div>
   <div class="eval-grid">
     <div class="eval-card">
       <div class="eval-num">01</div>
@@ -875,7 +879,7 @@
           <span class="prog-val" id="valZeroshot">—</span>
         </div>
         <div class="progress-row">
-          <span class="prog-label">DeBERTa</span>
+          <span class="prog-label">GPT Acc</span>
           <div class="prog-track"><div class="prog-fill" id="fillDeberta" data-val="0" style="background:var(--emerald)"></div></div>
           <span class="prog-val" id="valDeberta">—</span>
         </div>
@@ -1159,9 +1163,9 @@ async function runAnalysis(){
       }, 18);
     }
 
-    // Re-fetch eval metrics ~3 s after response — background G-Eval will have
-    // finished writing eval_results.json by then.
-    setTimeout(fetchEvalResults, 3000);
+    // Refresh eval metrics after G-Eval background job finishes (~3s),
+    // then keep polling until full results land.
+    setTimeout(() => { fetchEvalResults(); startEvalPolling(); }, 3000);
 
   } catch(err) {
     panel.innerHTML = `<div class="empty-state">
@@ -1181,26 +1185,36 @@ function setProgBar(fillId, valId, rawValue, displayText) {
   const fill = document.getElementById(fillId);
   const val  = document.getElementById(valId);
   if (!fill || !val) return;
-  fill.dataset.val   = rawValue;
-  fill.style.width   = rawValue + '%';  // update immediately if already visible
-  val.textContent    = displayText;
+  fill.dataset.val = rawValue;
+  fill.style.width = rawValue + '%';
+  val.textContent  = displayText;
 }
+
+let _evalPollTimer = null;
+let _evalComplete  = false;
 
 async function fetchEvalResults() {
   try {
-    const res = await fetch('/api/eval-results');
-    if (!res.ok) return; // nothing saved yet — keep — displayed
-    const d = await res.json();
+    const r = await fetch('/api/eval-results');
 
-    // ── Hero pill: G-Eval coherence ──────────────────────────────────────
-    if (d.geval?.coherence != null) {
-      document.getElementById('heroGeval').innerHTML =
-        d.geval.coherence.toFixed(1) + '<span style="font-size:1rem">/5</span>';
+    if (!r.ok) {
+      // No results yet — show computing indicator
+      const statusEl = document.getElementById('evalStatus');
+      if (statusEl) { statusEl.style.display = 'flex'; statusEl.style.alignItems = 'center'; }
+      return;
     }
 
-    // ── Hero pill: F1 ────────────────────────────────────────────────────
-    // Prefer real macro-F1 from full evaluation; fall back to live keyword
-    // precision computed during the last /api/analyze run.
+    const d = await r.json();
+
+    // Hide computing indicator once we have any data
+    const statusEl = document.getElementById('evalStatus');
+    if (statusEl) statusEl.style.display = 'none';
+
+    // ── Hero pills ───────────────────────────────────────────────────────
+    if (d.geval?.coherence != null)
+      document.getElementById('heroGeval').innerHTML =
+        d.geval.coherence.toFixed(1) + '<span style="font-size:1rem">/5</span>';
+
     if (d.gpt?.macroF1 != null) {
       const pct = Math.round(d.gpt.macroF1 * 100);
       document.getElementById('heroF1').textContent = 'F1 .' + String(pct).padStart(2,'0');
@@ -1209,29 +1223,47 @@ async function fetchEvalResults() {
         'KW ' + Math.round(d.liveKeywordPrecision * 100) + '%';
     }
 
-    // ── Eval card 01 — F1 progress bars ──────────────────────────────────
+    // ── Eval card 01 — classification bars ───────────────────────────────
     if (d.keyword?.macroF1 != null)
-      setProgBar('fillKeyword',  'valKeyword',
+      setProgBar('fillKeyword', 'valKeyword',
         Math.round(d.keyword.macroF1 * 100), d.keyword.macroF1.toFixed(2));
     else if (d.liveKeywordPrecision != null)
-      setProgBar('fillKeyword',  'valKeyword',
+      setProgBar('fillKeyword', 'valKeyword',
         Math.round(d.liveKeywordPrecision * 100), d.liveKeywordPrecision.toFixed(2));
 
     if (d.gpt?.macroF1 != null)
       setProgBar('fillZeroshot', 'valZeroshot',
         Math.round(d.gpt.macroF1 * 100), d.gpt.macroF1.toFixed(2));
 
+    if (d.gpt?.accuracy != null)
+      setProgBar('fillDeberta', 'valDeberta',
+        Math.round(d.gpt.accuracy * 100), d.gpt.accuracy.toFixed(2));
+
     // ── Eval card 03 — G-Eval quality bars (1–5 → 20–100%) ──────────────
     if (d.geval) {
       const toBarPct = s => Math.round((s / 5) * 100);
       if (d.geval.relevance != null)
-        setProgBar('fillRelevance', 'valRelevance', toBarPct(d.geval.relevance), d.geval.relevance.toFixed(1));
+        setProgBar('fillRelevance', 'valRelevance',
+          toBarPct(d.geval.relevance), d.geval.relevance.toFixed(1));
       if (d.geval.coherence != null)
-        setProgBar('fillCoherence', 'valCoherence', toBarPct(d.geval.coherence), d.geval.coherence.toFixed(1));
+        setProgBar('fillCoherence', 'valCoherence',
+          toBarPct(d.geval.coherence), d.geval.coherence.toFixed(1));
       if (d.geval.grounding != null)
-        setProgBar('fillGrounding', 'valGrounding', toBarPct(d.geval.grounding), d.geval.grounding.toFixed(1));
+        setProgBar('fillGrounding', 'valGrounding',
+          toBarPct(d.geval.grounding), d.geval.grounding.toFixed(1));
     }
-  } catch(e) { /* silently ignore — — stays until data is available */ }
+
+    // Stop polling once full evaluation results are available
+    if (d.gpt?.macroF1 != null && d.geval?.coherence != null) {
+      _evalComplete = true;
+      if (_evalPollTimer) { clearInterval(_evalPollTimer); _evalPollTimer = null; }
+    }
+  } catch(e) { /* silently ignore */ }
+}
+
+function startEvalPolling() {
+  if (_evalComplete || _evalPollTimer) return;
+  _evalPollTimer = setInterval(fetchEvalResults, 3000);
 }
 
 // spin animation
@@ -1249,7 +1281,8 @@ window.addEventListener('load', ()=>{
   setTimeout(()=>drawChart(
     PLACEHOLDER_CHART.labels, PLACEHOLDER_CHART.values, PLACEHOLDER_CHART.sentiment
   ), 300);
-  fetchEvalResults();
+  // Fetch immediately, then start polling in case startup eval is still running
+  fetchEvalResults().then(startEvalPolling);
 });
 window.addEventListener('resize', ()=>{
   drawChart(PLACEHOLDER_CHART.labels, PLACEHOLDER_CHART.values, PLACEHOLDER_CHART.sentiment);

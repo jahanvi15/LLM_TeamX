@@ -10,14 +10,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// Broad single-word/short keywords — GDELT full-text search is strict;
-// multi-word phrases often return 0 results.
+// OR-syntax queries give GDELT enough specificity to return distinct, theme-relevant
+// articles instead of the same generic climate headlines every time.
 const THEME_KEYWORDS = {
-  renewable:    'energy',
-  emissions:    'carbon',
-  biodiversity: 'environment',
-  water:        'water',
-  policy:       'climate'
+  renewable:    'solar OR wind OR "renewable energy" OR "clean energy" OR photovoltaic OR "battery storage"',
+  emissions:    '"carbon emissions" OR methane OR "greenhouse gas" OR "net zero" OR decarbonization OR "carbon tax"',
+  biodiversity: 'deforestation OR biodiversity OR "coral reef" OR "species extinction" OR wildlife OR habitat',
+  water:        '"water scarcity" OR drought OR flooding OR "sea level rise" OR "ocean warming" OR glacier',
+  policy:       '"climate policy" OR COP30 OR "Paris Agreement" OR "climate legislation" OR "carbon border"',
 };
 
 const REGION_TERMS = {
@@ -180,8 +180,8 @@ async function fetchGdelt(query, timespan) {
   const url =
     `https://api.gdeltproject.org/api/v2/doc/doc` +
     `?query=${encodeURIComponent(query)}` +
-    `&mode=artlist&maxrecords=20&format=json` +
-    `&timespan=${timespan}&sourcelang=english`;
+    `&mode=artlist&maxrecords=25&format=json` +
+    `&timespan=${timespan}&sourcelang=english&sort=DateDesc`;
   console.log(`[GDELT] GET ${url}`);
   try {
     const res  = await fetch(url, { timeout: 12000 });

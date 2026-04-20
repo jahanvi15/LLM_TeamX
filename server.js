@@ -158,6 +158,24 @@ app.post('/api/analyze', async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+// TLDs whose content is predominantly non-English
+const BLOCKED_TLDS = new Set(['.cn','.ru','.de','.fr','.es','.it','.pt','.jp','.kr','.ar','.br','.pl','.nl','.tr','.ua','.ro','.hu','.cz','.sk','.bg','.hr','.rs']);
+
+// Returns false if the domain ends in a blocked TLD
+function isEnglishDomain(domain) {
+  if (!domain) return true;
+  const d = domain.toLowerCase();
+  for (const tld of BLOCKED_TLDS) {
+    if (d === tld.slice(1) || d.endsWith(tld)) return false;
+  }
+  return true;
+}
+
+// Returns false if the title contains Cyrillic, Arabic, CJK, Hangul, Devanagari, or Thai
+function isLatinTitle(title) {
+  return !/[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0900-\u097F\u0E00-\u0E7F]/.test(title);
+}
+
 async function fetchGdelt(query, timespan) {
   const url =
     `https://api.gdeltproject.org/api/v2/doc/doc` +
@@ -168,15 +186,20 @@ async function fetchGdelt(query, timespan) {
   try {
     const res  = await fetch(url, { timeout: 12000 });
     const data = await res.json();
-    const articles = (data.articles || []).map(a => ({
+    const raw = (data.articles || []).map(a => ({
       title:   a.title  || '',
       source:  a.domain || 'GDELT',
       url:     a.url    || '#',
       date:    parseGdeltDate(a.seendate),
       snippet: '',
       from:    'gdelt'
-    })).filter(a => a.title);
-    console.log(`[GDELT] ${articles.length} articles returned for query="${query}"`);
+    }));
+    const articles = raw
+      .filter(a => a.title)
+      .filter(a => isEnglishDomain(a.source))
+      .filter(a => isLatinTitle(a.title));
+    const dropped = raw.length - articles.length;
+    console.log(`[GDELT] ${articles.length} articles returned for query="${query}" (${dropped} non-English filtered)`);
     return articles;
   } catch (e) {
     console.warn(`[GDELT] fetch failed for query="${query}":`, e.message);
@@ -243,6 +266,299 @@ function padOrTrim(arr, length) {
   while (out.length < length) out.push(out[out.length - 1] ?? 3.0);
   return out;
 }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Evaluation ────────────────────────────────────────────────────────────
+
+const CATEGORIES = ['renewable', 'emissions', 'biodiversity', 'water', 'policy'];
+
+const EVAL_KEYWORDS = {
+  renewable:    ['solar','wind','renewable','clean energy','battery','turbine','geothermal','hydrogen','nuclear','photovoltaic','ev','electric vehicle'],
+  emissions:    ['carbon','emission','co2','methane','greenhouse','fossil fuel','net zero','decarbonize','carbon capture','ghg','coal'],
+  biodiversity: ['species','forest','wildlife','ecosystem','biodiversity','deforestation','extinction','habitat','coral','reef','mammal','bird','fish','plant'],
+  water:        ['ocean','water','flood','drought','river','sea level','groundwater','rainfall','aquifer','monsoon','glacier','ice'],
+  policy:       ['policy','agreement','cop','law','regulation','government','treaty','pledge','summit','legislation','fund','subsidy','mandate'],
+};
+
+function classifyKeyword(title, snippet) {
+  const text = (title + ' ' + (snippet || '')).toLowerCase();
+  let best = null, bestCount = 0;
+  for (const cat of CATEGORIES) {
+    const count = EVAL_KEYWORDS[cat].filter(kw => text.includes(kw)).length;
+    if (count > bestCount) { bestCount = count; best = cat; }
+  }
+  return best || 'renewable'; // default to first category on all-zero tie
+}
+
+function computeMetrics(labels, preds) {
+  const total   = labels.length;
+  const correct = labels.filter((l, i) => l === preds[i]).length;
+  const accuracy = total > 0 ? correct / total : 0;
+
+  const perClass = {};
+  for (const cat of CATEGORIES) {
+    let tp = 0, fp = 0, fn = 0;
+    for (let i = 0; i < total; i++) {
+      const isGold = labels[i] === cat;
+      const isPred = preds[i]  === cat;
+      if (isGold && isPred)  tp++;
+      else if (!isGold && isPred) fp++;
+      else if (isGold && !isPred) fn++;
+    }
+    const support   = labels.filter(l => l === cat).length;
+    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+    const recall    = tp + fn > 0 ? tp / (tp + fn) : 0;
+    const f1        = precision + recall > 0 ? 2 * precision * recall / (precision + recall) : 0;
+    perClass[cat]   = { precision, recall, f1, support };
+  }
+
+  const macroF1 = CATEGORIES.reduce((s, c) => s + perClass[c].f1, 0) / CATEGORIES.length;
+  return { accuracy, macroF1, perClass };
+}
+
+// POST /api/evaluate — runs full evaluation and returns JSON
+app.post('/api/evaluate', async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(400).json({ error: 'OPENAI_API_KEY not set' });
+  }
+
+  let labeled;
+  try {
+    const raw = require('fs').readFileSync(path.join(__dirname, 'labeled_articles.json'), 'utf8');
+    labeled = JSON.parse(raw);
+  } catch (e) {
+    return res.status(500).json({ error: `Cannot read labeled_articles.json: ${e.message}` });
+  }
+
+  const total = labeled.length;
+  console.log(`[EVAL] Starting evaluation on ${total} articles`);
+
+  const goldLabels   = labeled.map(a => a.label);
+  const keywordPreds = labeled.map(a => classifyKeyword(a.title, a.snippet));
+
+  // GPT zero-shot — batches of 10 with 1 s delay
+  const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const gptPreds  = new Array(total);
+  const BATCH     = 10;
+
+  for (let start = 0; start < total; start += BATCH) {
+    const batch = labeled.slice(start, start + BATCH);
+    await Promise.all(batch.map(async (article, bi) => {
+      const idx = start + bi;
+      console.log(`[EVAL] Evaluating article ${idx + 1} of ${total}...`);
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content:
+              `Classify this sustainability news article into exactly one of these categories:\n` +
+              `renewable, emissions, biodiversity, water, policy\n\n` +
+              `Title: ${article.title}\n` +
+              `Snippet: ${article.snippet || ''}\n\n` +
+              `Reply with just the single category word in lowercase, nothing else.`
+          }],
+          max_tokens: 10,
+          temperature: 0,
+        });
+        const pred = completion.choices[0].message.content.trim().toLowerCase();
+        gptPreds[idx] = CATEGORIES.includes(pred) ? pred : 'renewable';
+      } catch (e) {
+        console.warn(`[EVAL] GPT failed for article ${idx + 1}:`, e.message);
+        gptPreds[idx] = 'renewable';
+      }
+    }));
+
+    if (start + BATCH < total) await sleep(1000);
+  }
+
+  console.log('[EVAL] Computing metrics...');
+  const gptMetrics     = computeMetrics(goldLabels, gptPreds);
+  const keywordMetrics = computeMetrics(goldLabels, keywordPreds);
+
+  // Round all floats to 2 dp for readability
+  const fmt = obj => {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = typeof v === 'number' ? Math.round(v * 1000) / 1000 : v;
+    }
+    return out;
+  };
+  const fmtMetrics = m => ({
+    accuracy: Math.round(m.accuracy * 1000) / 1000,
+    macroF1:  Math.round(m.macroF1  * 1000) / 1000,
+    perClass: Object.fromEntries(
+      CATEGORIES.map(c => [c, fmt(m.perClass[c])])
+    ),
+  });
+
+  res.json({
+    total,
+    gpt:     fmtMetrics(gptMetrics),
+    keyword: fmtMetrics(keywordMetrics),
+  });
+});
+
+// GET /api/evaluate — HTML shell that triggers the POST and renders results
+app.get('/api/evaluate', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI4Sustain — Classifier Evaluation</title>
+<style>
+  :root{--forest:#1a3d2b;--emerald:#2d6a4f;--sage:#52b788;--mint:#b7e4c7;
+        --cream:#f8f5ef;--paper:#fff;--sand:#ede8dc;--ink:#1c2b22;--muted:#6b7c70;--border:#d4e8da}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'DM Sans',system-ui,sans-serif;background:var(--cream);color:var(--ink);padding:2rem}
+  h1{font-family:Georgia,serif;font-size:1.8rem;color:var(--forest);margin-bottom:.4rem}
+  .subtitle{color:var(--muted);font-size:.9rem;margin-bottom:2rem}
+  .note{background:#fff8e1;border-left:4px solid #c4933f;border-radius:6px;
+        padding:.8rem 1.1rem;font-size:.85rem;color:#5a4000;margin-bottom:2rem}
+  button{background:var(--emerald);color:#fff;border:none;border-radius:8px;
+         padding:.65rem 1.6rem;font-size:.95rem;font-weight:600;cursor:pointer;transition:background .2s}
+  button:hover{background:var(--forest)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .spinner{display:none;margin-top:1.5rem;color:var(--muted);font-size:.9rem}
+  .spinner.on{display:block}
+  .results{display:none;margin-top:2rem}
+  .results.on{display:block}
+  .summary-row{display:flex;gap:1.5rem;margin-bottom:2rem;flex-wrap:wrap}
+  .summary-card{background:var(--paper);border:1px solid var(--border);border-radius:12px;
+                padding:1.4rem 1.8rem;min-width:180px;box-shadow:0 2px 12px rgba(26,61,43,.07)}
+  .summary-card .label{font-size:.75rem;font-weight:700;color:var(--muted);
+                        text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem}
+  .summary-card .value{font-family:Georgia,serif;font-size:2rem;color:var(--emerald)}
+  .summary-card .sub{font-size:.78rem;color:var(--muted);margin-top:.15rem}
+  h2{font-family:Georgia,serif;font-size:1.2rem;color:var(--forest);margin-bottom:1rem}
+  table{width:100%;border-collapse:collapse;background:var(--paper);
+        border:1px solid var(--border);border-radius:12px;overflow:hidden;
+        box-shadow:0 2px 12px rgba(26,61,43,.07);margin-bottom:2rem}
+  th{background:var(--forest);color:#fff;font-size:.78rem;font-weight:600;
+     text-transform:uppercase;letter-spacing:.05em;padding:.7rem 1rem;text-align:left}
+  th.num,td.num{text-align:right}
+  td{padding:.65rem 1rem;font-size:.85rem;border-top:1px solid var(--border)}
+  tr:nth-child(even) td{background:#fafdf9}
+  .cat{font-weight:600;color:var(--forest);text-transform:capitalize}
+  .hi{color:#155724;font-weight:700}
+  .lo{color:#721c24}
+  .col-gpt{background:rgba(45,106,79,.06)}
+  .col-kw{background:rgba(196,147,63,.06)}
+  .error{color:#721c24;background:#f8d7da;border:1px solid #f5c6cb;
+         border-radius:8px;padding:1rem;margin-top:1rem;font-size:.88rem}
+  footer{margin-top:3rem;font-size:.75rem;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+<h1>🌿 AI4Sustain — Classifier Evaluation</h1>
+<p class="subtitle">GPT-4o-mini zero-shot vs keyword baseline · computed from <code>labeled_articles.json</code></p>
+<div class="note">
+  ⏱️ <strong>This evaluation takes 2–3 minutes</strong> — GPT-4o-mini is called once per article in batches of 10.
+  Do not close this tab while it runs.
+</div>
+<button id="runBtn" onclick="runEval()">▶ Run Evaluation</button>
+<div class="spinner" id="spinner">⟳ Running… <span id="progress"></span></div>
+<div class="results" id="results"></div>
+
+<script>
+async function runEval() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  document.getElementById('spinner').classList.add('on');
+  document.getElementById('results').classList.remove('on');
+
+  try {
+    const res  = await fetch('/api/evaluate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
+    const data = await res.json();
+    document.getElementById('spinner').classList.remove('on');
+    document.getElementById('results').innerHTML = buildHTML(data);
+    document.getElementById('results').classList.add('on');
+  } catch(e) {
+    document.getElementById('spinner').classList.remove('on');
+    document.getElementById('results').innerHTML = '<div class="error">Error: ' + e.message + '</div>';
+    document.getElementById('results').classList.add('on');
+  }
+  btn.disabled = false;
+}
+
+function pct(v){ return (v*100).toFixed(1)+'%'; }
+function cls(v){ return v >= 0.75 ? 'hi' : v < 0.50 ? 'lo' : ''; }
+
+function buildHTML(d) {
+  const cats = ['renewable','emissions','biodiversity','water','policy'];
+  const rows = cats.map(cat => {
+    const g = d.gpt.perClass[cat];
+    const k = d.keyword.perClass[cat];
+    return \`<tr>
+      <td class="cat">\${cat}</td>
+      <td class="num col-gpt \${cls(g.precision)}">\${pct(g.precision)}</td>
+      <td class="num col-gpt \${cls(g.recall)}">\${pct(g.recall)}</td>
+      <td class="num col-gpt \${cls(g.f1)}">\${pct(g.f1)}</td>
+      <td class="num">\${g.support}</td>
+      <td class="num col-kw \${cls(k.precision)}">\${pct(k.precision)}</td>
+      <td class="num col-kw \${cls(k.recall)}">\${pct(k.recall)}</td>
+      <td class="num col-kw \${cls(k.f1)}">\${pct(k.f1)}</td>
+    </tr>\`;
+  }).join('');
+
+  return \`
+  <div class="summary-row">
+    <div class="summary-card">
+      <div class="label">Articles evaluated</div>
+      <div class="value">\${d.total}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">GPT-4o-mini accuracy</div>
+      <div class="value \${cls(d.gpt.accuracy)}">\${pct(d.gpt.accuracy)}</div>
+      <div class="sub">Macro F1: \${pct(d.gpt.macroF1)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Keyword baseline accuracy</div>
+      <div class="value \${cls(d.keyword.accuracy)}">\${pct(d.keyword.accuracy)}</div>
+      <div class="sub">Macro F1: \${pct(d.keyword.macroF1)}</div>
+    </div>
+  </div>
+  <h2>Per-class results</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th class="num col-gpt">GPT Prec</th>
+        <th class="num col-gpt">GPT Rec</th>
+        <th class="num col-gpt">GPT F1</th>
+        <th class="num">Support</th>
+        <th class="num col-kw">KW Prec</th>
+        <th class="num col-kw">KW Rec</th>
+        <th class="num col-kw">KW F1</th>
+      </tr>
+    </thead>
+    <tbody>\${rows}</tbody>
+    <tfoot>
+      <tr style="background:var(--sand)">
+        <td class="cat">Macro avg</td>
+        <td class="num col-gpt" colspan="2"></td>
+        <td class="num col-gpt \${cls(d.gpt.macroF1)}"><strong>\${pct(d.gpt.macroF1)}</strong></td>
+        <td class="num">\${d.total}</td>
+        <td class="num col-kw" colspan="2"></td>
+        <td class="num col-kw \${cls(d.keyword.macroF1)}"><strong>\${pct(d.keyword.macroF1)}</strong></td>
+      </tr>
+      <tr style="background:var(--sand)">
+        <td class="cat">Accuracy</td>
+        <td class="num col-gpt \${cls(d.gpt.accuracy)}" colspan="3"><strong>\${pct(d.gpt.accuracy)}</strong></td>
+        <td></td>
+        <td class="num col-kw \${cls(d.keyword.accuracy)}" colspan="3"><strong>\${pct(d.keyword.accuracy)}</strong></td>
+      </tr>
+    </tfoot>
+  </table>\`;
+}
+</script>
+<footer>AI4Sustain · LLM Spring 2026 · TeamX</footer>
+</body>
+</html>`);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`AI4Sustain running → http://localhost:${PORT}`));

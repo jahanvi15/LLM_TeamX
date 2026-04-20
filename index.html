@@ -1159,6 +1159,10 @@ async function runAnalysis(){
       }, 18);
     }
 
+    // Re-fetch eval metrics ~3 s after response — background G-Eval will have
+    // finished writing eval_results.json by then.
+    setTimeout(fetchEvalResults, 3000);
+
   } catch(err) {
     panel.innerHTML = `<div class="empty-state">
       <div class="empty-icon">⚠️</div>
@@ -1185,43 +1189,49 @@ function setProgBar(fillId, valId, rawValue, displayText) {
 async function fetchEvalResults() {
   try {
     const res = await fetch('/api/eval-results');
-    if (!res.ok) return;  // no cache yet — leave defaults in place
+    if (!res.ok) return; // nothing saved yet — keep — displayed
     const d = await res.json();
 
-    // Hero pill: F1 = GPT macro F1, G-Eval = coherence score
-    if (d.gpt?.macroF1 != null) {
-      document.getElementById('heroF1').textContent = 'F1 .' + String(Math.round(d.gpt.macroF1 * 100)).padStart(2, '0');
-    }
+    // ── Hero pill: G-Eval coherence ──────────────────────────────────────
     if (d.geval?.coherence != null) {
       document.getElementById('heroGeval').innerHTML =
         d.geval.coherence.toFixed(1) + '<span style="font-size:1rem">/5</span>';
     }
 
-    // Eval card 01 — keyword and zero-shot F1 bars (scale 0–1 → 0–100%)
-    if (d.keyword?.macroF1 != null) {
-      setProgBar('fillKeyword', 'valKeyword',
-        Math.round(d.keyword.macroF1 * 100),
-        d.keyword.macroF1.toFixed(2));
-    }
+    // ── Hero pill: F1 ────────────────────────────────────────────────────
+    // Prefer real macro-F1 from full evaluation; fall back to live keyword
+    // precision computed during the last /api/analyze run.
     if (d.gpt?.macroF1 != null) {
-      setProgBar('fillZeroshot', 'valZeroshot',
-        Math.round(d.gpt.macroF1 * 100),
-        d.gpt.macroF1.toFixed(2));
+      const pct = Math.round(d.gpt.macroF1 * 100);
+      document.getElementById('heroF1').textContent = 'F1 .' + String(pct).padStart(2,'0');
+    } else if (d.liveKeywordPrecision != null) {
+      document.getElementById('heroF1').textContent =
+        'KW ' + Math.round(d.liveKeywordPrecision * 100) + '%';
     }
 
-    // Eval card 03 — G-Eval quality bars (scale 1–5 → 20–100%)
+    // ── Eval card 01 — F1 progress bars ──────────────────────────────────
+    if (d.keyword?.macroF1 != null)
+      setProgBar('fillKeyword',  'valKeyword',
+        Math.round(d.keyword.macroF1 * 100), d.keyword.macroF1.toFixed(2));
+    else if (d.liveKeywordPrecision != null)
+      setProgBar('fillKeyword',  'valKeyword',
+        Math.round(d.liveKeywordPrecision * 100), d.liveKeywordPrecision.toFixed(2));
+
+    if (d.gpt?.macroF1 != null)
+      setProgBar('fillZeroshot', 'valZeroshot',
+        Math.round(d.gpt.macroF1 * 100), d.gpt.macroF1.toFixed(2));
+
+    // ── Eval card 03 — G-Eval quality bars (1–5 → 20–100%) ──────────────
     if (d.geval) {
       const toBarPct = s => Math.round((s / 5) * 100);
-      if (d.geval.relevance  != null)
-        setProgBar('fillRelevance',  'valRelevance',  toBarPct(d.geval.relevance),  d.geval.relevance.toFixed(1));
-      if (d.geval.coherence  != null)
-        setProgBar('fillCoherence',  'valCoherence',  toBarPct(d.geval.coherence),  d.geval.coherence.toFixed(1));
-      if (d.geval.grounding  != null)
-        setProgBar('fillGrounding',  'valGrounding',  toBarPct(d.geval.grounding),  d.geval.grounding.toFixed(1));
+      if (d.geval.relevance != null)
+        setProgBar('fillRelevance', 'valRelevance', toBarPct(d.geval.relevance), d.geval.relevance.toFixed(1));
+      if (d.geval.coherence != null)
+        setProgBar('fillCoherence', 'valCoherence', toBarPct(d.geval.coherence), d.geval.coherence.toFixed(1));
+      if (d.geval.grounding != null)
+        setProgBar('fillGrounding', 'valGrounding', toBarPct(d.geval.grounding), d.geval.grounding.toFixed(1));
     }
-  } catch(e) {
-    // Silently ignore — page still works with defaults
-  }
+  } catch(e) { /* silently ignore — — stays until data is available */ }
 }
 
 // spin animation
